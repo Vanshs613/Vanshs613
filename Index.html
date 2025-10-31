@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Crypto-Tracker — Vansh</title>
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{
+    --bg:#0b1020; --card:#0f1724; --muted:#9aa4bf; --green:#22c55e; --red:#fb7185;
+    --accent:#06b6d4;
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,-apple-system,"Helvetica Neue",Arial;}
+  body{background:linear-gradient(180deg,#021028 0%, #071426 100%); color:#e6eef8; -webkit-font-smoothing:antialiased;}
+  .container{max-width:980px;margin:18px auto;padding:12px;}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .logo{width:48px;height:48px;border-radius:8px;background:linear-gradient(135deg,#06b6d4,#7c3aed);display:flex;align-items:center;justify-content:center;font-weight:700}
+  h1{font-size:18px;margin:0}
+  p.lead{margin:0;color:var(--muted);font-size:13px}
+  .grid{display:grid;grid-template-columns:1fr 1.3fr;gap:12px;margin-top:16px}
+  @media(max-width:760px){ .grid{grid-template-columns:1fr} }
+  .card{background:var(--card);border-radius:12px;padding:12px;box-shadow:0 6px 18px rgba(2,6,23,0.6);}
+  .list-item{display:flex;align-items:center;justify-content:space-between;padding:10px;border-radius:8px;margin-bottom:8px;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);}
+  .coin-meta{display:flex;align-items:center;gap:12px}
+  .coin-logo{width:44px;height:44;border-radius:8px;display:flex;align-items:center;justify-content:center;background:#071430;font-weight:700}
+  .coin-name{font-size:14px;font-weight:600}
+  .coin-sub{font-size:12px;color:var(--muted)}
+  .price{font-weight:700}
+  .change{font-size:12px;padding:6px 8px;border-radius:999px}
+  .change.up{background:rgba(34,197,94,0.12);color:var(--green)}
+  .change.down{background:rgba(251,113,133,0.08);color:var(--red)}
+  .controls{display:flex;gap:8px;align-items:center}
+  button{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted);padding:8px 10px;border-radius:8px;font-size:13px}
+  .small{font-size:12px;color:var(--muted)}
+  canvas{max-width:100%}
+  .footer{margin-top:10px;font-size:12px;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+  a.link{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">CT</div>
+    <div>
+      <h1>Crypto-Tracker</h1>
+      <p class="lead">Real-time token prices & 7-day chart — Solana & DeFi focused (demo)</p>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- Left: Coin list -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <strong>Top Tokens</strong>
+        <div class="controls">
+          <span class="small" id="lastUpdated">—</span>
+          <button id="refreshBtn">Refresh</button>
+        </div>
+      </div>
+
+      <div id="coinList">
+        <!-- dynamic items -->
+      </div>
+
+      <div class="footer">
+        <div>Source: <a class="link" href="https://www.coingecko.com" target="_blank">CoinGecko API</a></div>
+        <div class="small">Built by Vansh</div>
+      </div>
+    </div>
+
+    <!-- Right: Chart -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <strong id="chartTitle">Select a coin</strong>
+        <div class="small">7-day chart</div>
+      </div>
+      <canvas id="priceChart" height="180"></canvas>
+      <div style="margin-top:10px" class="small" id="chartNote">Click any token to load chart.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/*
+ Simple Crypto-Tracker using CoinGecko public APIs.
+ No API key needed.
+*/
+
+const coins = [
+  {id:'bitcoin', symbol:'BTC', name:'Bitcoin'},
+  {id:'ethereum', symbol:'ETH', name:'Ethereum'},
+  {id:'solana', symbol:'SOL', name:'Solana'}
+];
+
+// DOM
+const coinListEl = document.getElementById('coinList');
+const lastUpdatedEl = document.getElementById('lastUpdated');
+const refreshBtn = document.getElementById('refreshBtn');
+const chartTitle = document.getElementById('chartTitle');
+const chartNote = document.getElementById('chartNote');
+
+let chart = null;
+let activeCoin = null;
+let refreshInterval = 60000; // 60s
+
+// Utility
+function fmt(n){ return n>=1 ? n.toLocaleString(undefined,{maximumFractionDigits:2}) : n.toFixed(6); }
+function agoTime(){ return new Date().toLocaleTimeString(); }
+
+// Build list UI
+function renderList(data){
+  coinListEl.innerHTML = '';
+  coins.forEach(c=>{
+    const d = data[c.id];
+    const el = document.createElement('div');
+    el.className = 'list-item';
+    el.innerHTML = `
+      <div class="coin-meta">
+        <div class="coin-logo">${c.symbol}</div>
+        <div>
+          <div class="coin-name">${c.name}</div>
+          <div class="coin-sub">${c.symbol} • Market</div>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div class="price">₹${fmt(d.price_inr)}</div>
+        <div class="change ${d.change24<0?'down':'up'}">${d.change24>=0?'+':''}${d.change24.toFixed(2)}%</div>
+      </div>
+    `;
+    el.addEventListener('click', ()=> loadChart(c.id, c.name));
+    coinListEl.appendChild(el);
+  });
+}
+
+// Fetch simple price (INR)
+async function fetchPrices(){
+  try{
+    const ids = coins.map(c=>c.id).join(',');
+    // Using CoinGecko simple price for INR + 24h change
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=inr&include_24hr_change=true`;
+    const res = await fetch(url);
+    const json = await res.json();
+    // Normalise
+    const out = {};
+    for(const id of Object.keys(json)){
+      out[id] = {
+        price_inr: json[id].inr || 0,
+        change24: json[id].inr_24h_change || 0
+      }
+    }
+    lastUpdatedEl.textContent = 'Updated: ' + agoTime();
+    renderList(out);
+  } catch(err){
+    console.error(err);
+    lastUpdatedEl.textContent = 'Error fetching';
+  }
+}
+
+// Load 7-day market chart and show in Chart.js
+async function loadChart(id, name){
+  try{
+    chartTitle.textContent = name + ' — 7 days';
+    chartNote.textContent = 'Loading...';
+    // CoinGecko market_chart (vs_currency=inr, days=7)
+    const res = await fetch(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=inr&days=7`);
+    const json = await res.json();
+    const prices = json.prices || [];
+    const labels = prices.map(p => { const d = new Date(p[0]); return d.toLocaleDateString(); });
+    const data = prices.map(p => p[1]);
+    // destroy old
+    if(chart) chart.destroy();
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: name + ' price (INR)',
+          data,
+          fill: true,
+          tension: 0.25,
+          pointRadius: 0,
+          borderWidth: 2
+        }]
+      },
+      options: {
+        plugins:{legend:{display:false}},
+        scales:{x:{display:true,grid:{display:false}},y:{display:true}}
+      }
+    });
+    chartNote.textContent = 'Last updated: ' + agoTime();
+    activeCoin = id;
+  } catch(err){
+    console.error(err);
+    chartNote.textContent = 'Failed to load chart';
+  }
+}
+
+// refresh control
+refreshBtn.addEventListener('click', ()=> fetchPrices());
+
+// initial fetch & interval
+fetchPrices();
+setInterval(fetchPrices, refreshInterval);
+
+</script>
+</body>
+                                             </html>
